@@ -15,8 +15,8 @@ A Python framework for analyzing and modeling complex networks using multifracta
 The easiest way to get started is using our pre-built Docker container:
 
 ```bash
-docker pull placeholder.fornow/multifractal-networks
-docker run -p 8501:8501 -p 8888:8888 placeholder.fornow/multifractal-networks
+docker pull baskayj/multifractal-networks
+docker run -p 8501:8501 -p 8888:8888 baskayj/multifractal-networks
 ```
 
 By default, this will start the Streamlit interface at http://localhost:8501.
@@ -28,7 +28,7 @@ The container supports two interfaces:
 ### Streamlit Interface (Recommended)
 
 ```bash
-docker run -p 8501:8501 placeholder.fornow/multifractal-networks
+docker run -p 8501:8501 baskayj/multifractal-networks
 ```
 Then open `http://localhost:8501` in your browser. The Streamlit interface provides:
 
@@ -40,7 +40,7 @@ Then open `http://localhost:8501` in your browser. The Streamlit interface provi
 ### Jupyter Lab Interface
 
 ```bash
-docker run -p 8888:8888 placeholder.fornow/multifractal-networks ./start.sh jupyter
+docker run -p 8888:8888 baskayj/multifractal-networks ./start.sh jupyter
 ```
 Then open `http://localhost:8888` in your browser. The Jupyter interface is useful for:
 
@@ -57,6 +57,7 @@ If you prefer to build the container yourself:
 git clone https://github.com/username/multifractal-networks.git
 cd multifractal-networks
 docker build -t multifractal-networks .
+docker run -p 8501:8501 multifractal-networks
 ```
 
 ## Features
