@@ -128,6 +128,33 @@ def find_max_d(G):
     degree_sequence = [d for _, d in G.degree()]
     return max(degree_sequence)
 
+def find_min_d(G):
+    """
+    Finds the minimum degree among all nodes in a graph.
+
+    Parameters:
+    ----------
+    G : networkx.Graph
+        The input graph.
+
+    Returns:
+    -------
+    int
+        The minimum degree found among all nodes in the graph.
+
+    Examples:
+    --------
+    >>> G = nx.star_graph(5)
+    >>> find_max_d(G)
+    5
+    """
+    degree_sequence = [d for _, d in G.degree()]
+    min_d = min(degree_sequence)
+    if min_d == 0:
+        return 1
+    else:
+        return min_d
+
 def keep_largest_component(G):
     """
     Extracts the largest connected component from a graph.

@@ -130,7 +130,7 @@ def plot_metric(P_k, l_k,
     ax.set_yticklabels([])
 
     if filename:
-        plt.savefig(filename, dpi = 1000)
+        plt.savefig(filename, dpi = 1000, bbox_inches='tight')
     if streamlit:
         return fig
     else:
@@ -355,7 +355,7 @@ def plot_curves(d, measured, analytical,
     ax1.grid(True)
     
     if filename:
-        fig.savefig(filename, dpi=1000)
+        fig.savefig(filename, dpi=1000, bbox_inches='tight')
 
     if streamlit:
         return fig
@@ -365,7 +365,8 @@ def plot_curves(d, measured, analytical,
         return None
 
 def plot_motif_spectra(all_motifs,
-                       plot_cumulative_error = True,
+                       plot_cumulative_error = False,
+                       log_scale = False,
                        filename = None,
                        streamlit = False
                       ):
@@ -513,6 +514,8 @@ def plot_motif_spectra(all_motifs,
             label.set_y(-0.08)
 
     ax.set_ylabel('← Mean Relative Error (MRE)')
+    if log_scale:
+        ax.set_yscale('log')
 
     # Adjust the main plot to provide room for the motif plots underneath
     plt.subplots_adjust(bottom=0.55)
@@ -584,7 +587,7 @@ def plot_motif_spectra(all_motifs,
     ax.legend(loc='upper left', facecolor='white', edgecolor='gray')
 
     if filename:
-        plt.savefig(filename, dpi = 1000)
+        plt.savefig(filename, dpi = 1000, bbox_inches='tight')
     if streamlit:
         return fig
     else:

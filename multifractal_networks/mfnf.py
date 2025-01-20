@@ -27,7 +27,7 @@ from matplotlib.colors import Normalize, LogNorm
 from joblib import Parallel, delayed, cpu_count
 from tqdm_joblib import tqdm_joblib
 
-from multifractal_networks.utils.misc import sort_state, kron_pow, find_max_d
+from multifractal_networks.utils.misc import sort_state, kron_pow, find_max_d, find_min_d
 from multifractal_networks.utils.misc import correct_correlations, smooth_data, smooth_data_log_scale, log_transform
 
 from multifractal_networks.utils.visualization import plot_metric, plot_curves, plot_motif_spectra
@@ -254,9 +254,10 @@ class MultifractalNetworkFitter:
         self.G = G
         self.N = len(G)
         self.max_d = find_max_d(self.G)
+        self.min_d = find_min_d(self.G)
         if d_range is None:
-            self.rho_d_range = [0,find_max_d(self.G)]
-            self.dnn_d_range = [0,find_max_d(self.G)]
+            self.rho_d_range = [self.min_d, self.max_d]
+            self.dnn_d_range = [self.min_d, self.max_d]
         else:
             self.rho_d_range = d_range
             self.dnn_d_range = d_range
@@ -1031,6 +1032,7 @@ class MultifractalNetworkFitter:
         # Plot motif spectra
         fig3 = plot_motif_spectra(self.motifs,
                                   plot_cumulative_error=plot_cumulative_error,
+                                  log_scale=log_scale,
                                   filename=filename_motifs,
                                   streamlit=streamlit)
         

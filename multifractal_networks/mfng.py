@@ -10,20 +10,20 @@ from time import time
 from tqdm import tqdm
 from scipy.signal import savgol_filter
 from matplotlib.colors import Normalize, LogNorm
-from itertools import combinations
+from itertools import combinations, product
 
 import concurrent.futures
 
 from multifractal_networks.utils.metrics import measure_degree_distribution, measure_nearest_neighbor_avg_degree
 from multifractal_networks.utils.metrics import analytical_degree_distribution, analytical_nearest_neighbor_avg_degree, MRE
 from multifractal_networks.utils.metrics import MotifAnalyzer
-from multifractal_networks.utils.misc import find_max_d, kron_pow, correct_correlations, sort_state, keep_largest_component
+from multifractal_networks.utils.misc import find_max_d, find_min_d, kron_pow, correct_correlations, sort_state, keep_largest_component
 from multifractal_networks.utils.visualization import plot_curves, plot_metric, plot_motif_spectra
 from multifractal_networks.utils.motifs import MotifGenerator
 
 
 class MultifractalNetworkGenerator:
-    def __init__(self, P, l, k, N=None, avg_degree=None, num_workers = 1):
+    def __init__(self, P, l, k, N=None, avg_degree=None, num_workers = 10):
         assert len(l) == len(P), 'P and l should have the same dimension'
         assert num_workers != 0, 'Set num workers to a positive integer, or -1 to use all cores'
         start_time = time()
@@ -85,8 +85,15 @@ class MultifractalNetworkGenerator:
         raise ValueError(f"Could not estimate a suitable k value within {max_iterations} iterations")
 
     def generate_edges(self, node_pairs, indices):
+        """Helper function to generate edges for specific node pairs"""
         edges = []
+        current_time = int(time())  # Get current time once for this batch
+        
         for i, j in node_pairs:
+            # Create unique seed from node indices and time
+            seed = (i * j + current_time) % (2**32 - 1)  # Keep within numpy's seed range
+            np.random.seed(seed)
+            
             i_idx = indices[i]
             j_idx = indices[j]
             link_proba = self.P_k[i_idx, j_idx]
@@ -94,64 +101,113 @@ class MultifractalNetworkGenerator:
                 edges.append((i, j))
         return edges
     
-    def __call__(self, multiprocess = True, clean_graph = False):
-        points = np.random.rand(self.N)
+    def generate_edges_alternate(self, node_pairs, indices):
+        """Helper function for alternate edge generation mode"""
+        edges = []
+        current_time = int(time())  # Get current time once for this batch
         
+        for i, j in node_pairs:
+            # Create unique seed from node indices and time
+            seed = (i * j + current_time) % (2**32 - 1)  # Keep within numpy's seed range
+            np.random.seed(seed)
+            
+            i_idx = indices[i]
+            j_idx = indices[j]
+            # Generate k independent edge attempts
+            edge_exists = True
+            for _ in range(self.k):
+                link_proba = self.P[i_idx, j_idx]
+                if np.random.rand() > link_proba:
+                    edge_exists = False
+                    break
+            if edge_exists:
+                edges.append((i, j))
+        return edges
+
+    def refine_network_structure(self, points, indices, base_seed=None):
+        """Iteratively handle zero degree nodes until none remain"""
+        refinement_count = 0
+        
+        while True:
+            zero_degree_nodes = [node for node, degree in self.G.degree() if degree == 0]
+            if not zero_degree_nodes:
+                break
+    
+            print(f'Refining {len(zero_degree_nodes)} outlier nodes...')
+            all_nodes = range(self.N)
+            new_pairs = [(i, j) for i, j in product(zero_degree_nodes, all_nodes) if i != j]
+            
+            if self.multiprocess:
+                chunk_size = len(new_pairs) // self.num_workers
+                with concurrent.futures.ProcessPoolExecutor(max_workers=self.num_workers) as executor:
+                    futures = []
+                    for i in range(self.num_workers):
+                        chunk = new_pairs[i * chunk_size: (i + 1) * chunk_size]
+                        # Create unique seed for this chunk in this refinement iteration
+                        if self.alternate_mode:
+                            futures.append(executor.submit(self.generate_edges_alternate, chunk, indices))
+                        else:
+                            futures.append(executor.submit(self.generate_edges, chunk, indices))
+                    
+                    new_edges = []
+                    for future in tqdm(concurrent.futures.as_completed(futures), total=self.num_workers):
+                        new_edges.extend(future.result())
+            else:    
+                if self.alternate_mode:
+                    new_edges = self.generate_edges_alternate(new_pairs, indices)
+                else:
+                    new_edges = self.generate_edges(new_pairs, indices)
+                    
+            self.G.add_edges_from(new_edges)
+            refinement_count += 1
+
+    def __call__(self, multiprocess=True, alternate_mode=False, seed=None):
+        if seed is not None:
+            np.random.seed(seed)
+        
+        self.multiprocess = multiprocess
+        self.alternate_mode = alternate_mode
+        
+        points = np.random.rand(self.N)
         self.G = nx.Graph()
         self.G.add_nodes_from(range(self.N))
-
+    
         def get_index(l, point):
             cum_sum_l = np.cumsum(l)
-            index = np.searchsorted(cum_sum_l, point, side = 'right')
+            index = np.searchsorted(cum_sum_l, point, side='right')
             return index
-
-        '''for i in tqdm(range(self.N)):
-            for j in range(i+1, self.N):
-                i_idx = get_index(self.l_k, points[i])
-                j_idx = get_index(self.l_k, points[j])
-
-                link_proba = self.P_k[i_idx, j_idx]
-                
-                if np.random.rand() <= link_proba:
-                    self.G.add_edge(i, j)'''
-
-        indices = [get_index(self.l_k, point) for point in points]
-
-        if multiprocess:
-            # Generate all node pairs
-            print('Preparing node pairs...')
-            start_time = time()
-            node_pairs = list(combinations(range(self.N), 2))
-            end_time = time() - start_time
-            print(end_time)
-            
-            # Use concurrent futures for parallel processing
-            chunk_size = len(node_pairs) // self.num_workers
     
-            print('Commencing edge generation...')
+        indices = [get_index(self.l_k if not alternate_mode else self.l, point) for point in points]
+        
+        print('Preparing node pairs...')
+        node_pairs = list(combinations(range(self.N), 2))
+        
+        print('Commencing edge generation...')
+        if multiprocess:
+            chunk_size = len(node_pairs) // self.num_workers
             with concurrent.futures.ProcessPoolExecutor(max_workers=self.num_workers) as executor:
                 futures = []
-                for i in range(self.num_workers):
+                for i in range(self.num_workers):                  
                     chunk = node_pairs[i * chunk_size: (i + 1) * chunk_size]
-                    futures.append(executor.submit(self.generate_edges, chunk, indices))
+                    if self.alternate_mode:
+                        futures.append(executor.submit(self.generate_edges_alternate, chunk, indices))
+                    else:
+                        futures.append(executor.submit(self.generate_edges, chunk, indices))
                 
                 all_edges = []
                 for future in tqdm(concurrent.futures.as_completed(futures), total=self.num_workers):
                     all_edges.extend(future.result())
             
             self.G.add_edges_from(all_edges)
-
         else:
-            for node_pair in tqdm(combinations(range(self.N), 2)):
-                edges = self.generate_edges([node_pair], indices)
-                self.G.add_edges_from(edges)
-
-        if clean_graph:
-            # Remove dangling nodes
-            nodes = max(nx.connected_components(self.G), key=len)
-            self.G = nx.subgraph(self.G, nodes)
-            # Update N accordingly
-            self.N = len(self.G)
+            if alternate_mode:
+                edges = self.generate_edges_alternate(node_pairs, indices)
+            else:
+                edges = self.generate_edges(node_pairs, indices)
+            self.G.add_edges_from(edges)
+    
+        print('Refining network structure...')
+        self.refine_network_structure(points, indices, seed)
 
     def save_network(self, filename):
         if self.G is None:
@@ -178,7 +234,7 @@ class MultifractalNetworkGenerator:
                                title = None,
                                filename = None,
                                streamlit = False,
-                               largest_component_only=True,
+                               largest_component_only=False,
                                smart_viz=True
                               ):
         """
@@ -338,7 +394,7 @@ class MultifractalNetworkGenerator:
         plt.tight_layout()
         
         if filename:
-            plt.savefig(filename, dpi=1000, facecolor=fig.get_facecolor())
+            plt.savefig(filename, dpi=1000, facecolor=fig.get_facecolor(), bbox_inches='tight')
         
         if streamlit:
             return fig
@@ -366,27 +422,59 @@ class MultifractalNetworkGenerator:
                       filename = None):
         if self.G is None:
             raise ValueError("Generate the network first!")
+        if filename:
+            base, extension = os.path.splitext(filename)
+            filename_rho = f"{base}_rho{extension}"
+            filename_deg_nn = f"{base}_deg_nn{extension}"
+            filename_motifs = f"{base}_motifs{extension}"
+            filename_measure = f"{base}_measure{extension}"
+        else:
+            filename_rho, filename_deg_nn, filename_motifs, filename_measure = None, None, None, None
         # --------------------
         # MEASURE
         # --------------------
         if log_scale:
-            plot_metric(self.P_k, self.l_k, grid = grid, norm = LogNorm)
+            plot_metric(self.P_k, self.l_k,
+                        grid = grid,
+                        norm = LogNorm,
+                        filename = filename_measure
+                       )
         else:
-            plot_metric(self.P_k, self.l_k, grid = grid, norm = Normalize)
+            plot_metric(self.P_k, self.l_k,
+                        grid = grid,
+                        norm = Normalize,
+                        filename = filename_measure
+                       )
         # --------------------
         # Degree distribution and correlations
         # --------------------
         max_d = find_max_d(self.G)
-        d_range = list(range(0,max_d+1))
-        rho_measured = measure_degree_distribution(self.G, [0,max_d])
-        #rho_measured = savgol_filter(rho_measured, window_length=10, polyorder=3)
-        dnn_measured = measure_nearest_neighbor_avg_degree(self.G, [0,max_d])
-        #dnn_measured = correct_correlations(dnn_measured)
-        rho_analytical,_ = analytical_degree_distribution(self.P_k, self.l_k,self. N, [0,max_d])
-        dnn_analytical,_ = analytical_nearest_neighbor_avg_degree(self.P_k, self.l_k, rho_analytical, self.N, [0,max_d])
+        min_d = find_min_d(self.G)
+        d_range = list(range(min_d,max_d+1))
+        rho_measured = measure_degree_distribution(self.G, [min_d,max_d])
+        rho_measured = savgol_filter(rho_measured, window_length=10, polyorder=3)
+        dnn_measured = measure_nearest_neighbor_avg_degree(self.G, [min_d,max_d])
+        #dnn_measured, d_sliced = correct_correlations(d_range, dnn_measured, noise_factor = 0.1)
+        rho_analytical,_ = analytical_degree_distribution(self.P_k, self.l_k,self. N, [min_d,max_d])
+        dnn_analytical,_ = analytical_nearest_neighbor_avg_degree(self.P_k, self.l_k, rho_analytical, self.N, [min_d,max_d])
         # TODO: ADD SUPPORT FOR FILENAMES AND SAVING THE RESULTS
-        plot_curves(d_range, rho_measured, rho_analytical, log_scale=False, analytical_ci=None, display_mre=True)
-        plot_curves(d_range, dnn_measured, dnn_analytical, log_scale=False, analytical_ci=None, display_mre=True)
+        plot_curves(d_range, rho_measured, rho_analytical,
+                    xlabel='d',
+                    ylabel=r'$\rho^{k}(d)$',
+                    log_scale=log_scale,
+                    analytical_ci=None,
+                    display_mre=True,
+                    display_kld=True,
+                    filename=filename_rho
+                   )
+        plot_curves(d_range, dnn_measured, dnn_analytical,
+                    xlabel='d',
+                    ylabel=r'$d^{NN}(d)$',
+                    log_scale=log_scale,
+                    analytical_ci=None,
+                    display_mre=True,
+                    filename=filename_deg_nn
+                   )
         # --------------------
         # MOTIFS
         # --------------------
@@ -424,11 +512,13 @@ class MultifractalNetworkGenerator:
                 motif_name = motif['name']
                 if motif_name in results:
                     analyzer = MotifAnalyzer(
-                    adj_matrices=[motif['matrix'] for motif in motifs_of_size],
-                    names=[motif['name'] for motif in motifs_of_size]
-                )
+                        adj_matrices=[motif['matrix'] for motif in motifs_of_size],
+                        names=[motif['name'] for motif in motifs_of_size]
+                    )
                     motif_analytical = analyzer.expected_number_of_motifs(self.P, self.l, self.k, self.N)
                     motif_measured = results[motif_name]['count']
+                    motif['analytical_count'] = motif_analytical[motif_name]
+                    motif['count'] = motif_measured
                     mre_motif = MRE(motif_measured, motif_analytical[motif_name])
                     motif['MRE'] = mre_motif   
                     # Optionally check for confidence intervals
@@ -440,5 +530,9 @@ class MultifractalNetworkGenerator:
                         if motif['MRE_ci_low'] > motif['MRE_ci_high']:
                             motif['MRE_ci_low'], motif['MRE_ci_high'] = motif['MRE_ci_high'], motif['MRE_ci_low']
         # Plotting
-        plot_motif_spectra(motifs)
+        self.motifs = motifs
+        plot_motif_spectra(motifs,
+                           log_scale=log_scale,
+                           filename=filename_motifs
+                          )
         
