@@ -129,11 +129,13 @@ class MultifractalNetworkGenerator:
         refinement_count = 0
         
         while True:
+            if refinement_count > 100:
+                break
             zero_degree_nodes = [node for node, degree in self.G.degree() if degree == 0]
             if not zero_degree_nodes:
                 break
     
-            print(f'Refining {len(zero_degree_nodes)} outlier nodes...')
+            #print(f'Refining {len(zero_degree_nodes)} outlier nodes...')
             all_nodes = range(self.N)
             new_pairs = [(i, j) for i, j in product(zero_degree_nodes, all_nodes) if i != j]
             
@@ -150,7 +152,7 @@ class MultifractalNetworkGenerator:
                             futures.append(executor.submit(self.generate_edges, chunk, indices))
                     
                     new_edges = []
-                    for future in tqdm(concurrent.futures.as_completed(futures), total=self.num_workers):
+                    for future in concurrent.futures.as_completed(futures):
                         new_edges.extend(future.result())
             else:    
                 if self.alternate_mode:
