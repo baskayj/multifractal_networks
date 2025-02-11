@@ -58,42 +58,38 @@ def MRE(truth, pred, debug=False):
     pred = np.where(pred < 0, 0, pred)
 
     # Set a lower bound
-    lower_bound = min(truth) if min(truth) < 1 else None
-    if lower_bound is not None:
-        pred = np.where(pred <= lower_bound, 0, pred)
-        truth = np.where(truth <= lower_bound, 0, truth)
+    if len(truth) > 1:
+        lower_bound = min(truth) if min(truth) < 1 else None
+        if lower_bound is not None:
+            pred = np.where(pred <= lower_bound, 0, pred)
+            truth = np.where(truth <= lower_bound, 0, truth)
 
     # Identify valid indices where neither truth nor pred is NaN and neither is zero
     both_zero = (truth == 0) & (pred == 0)
-    either_zero = ((truth == 0) | (pred == 0)) & ~both_zero
+    #either_zero = ((truth == 0) | (pred == 0)) & ~both_zero
     invalid = np.isnan(pred) | np.isnan(truth) | np.isinf(pred) | np.isinf(truth)
-    valid_indices = ~ (either_zero | invalid | both_zero)
+    #valid_indices = ~ (either_zero | invalid | both_zero)
+    valid_indices = ~ (invalid | both_zero)
 
-    # If no valid indices are left, return None
-    if not np.any(valid_indices):
-        return 1.0 if not debug else (1.0, {'errors': [1.0] * len(truth), 'cumulative_errors': np.cumsum(np.array([1.0] * len(truth)))})
-
-    # Compute numerator and denominator
-    numerator = np.abs(truth[valid_indices] - pred[valid_indices])
-    denominator = np.maximum(truth[valid_indices],pred[valid_indices])
-
-    # Calculate relative errors
-    relative_errors = np.full_like(truth, 1.0, dtype=object)
+    # Initialize relative errors with ones
+    relative_errors = np.full_like(truth, 1.0, dtype=float)
+    
+    # Set zero error where both values are zero
     relative_errors[both_zero] = 0.0
-    relative_errors[valid_indices] = numerator / denominator
 
-    # Calculate mean ignoring None values
-    valid_relative_errors = np.array([x for x in relative_errors if x is not None])
-    mean_relative_error = np.sum(valid_relative_errors) / len(truth)
+    # Compute relative errors for valid indices
+    if np.any(valid_indices):
+        numerator = np.abs(truth[valid_indices] - pred[valid_indices])
+        denominator = np.maximum(truth[valid_indices], pred[valid_indices])
+        relative_errors[valid_indices] = numerator / denominator
+
+    # Calculate mean including zeros from both_zero cases
+    mean_relative_error = np.mean(relative_errors)
 
     if debug:
-        # Compute cumulative sum, treating None as 0
-        relative_errors_filled = np.array([x if x is not None else 1.0 for x in relative_errors])
-        cumsum = np.cumsum(relative_errors_filled)
-        
+        cumsum = np.cumsum(relative_errors)
         return (mean_relative_error, {'errors': relative_errors, 'cumulative_errors': cumsum})
 
-    # Return mean if not in debug mode
     return mean_relative_error
 
 def KL_divergence(truth, pred, debug=False):
@@ -953,5 +949,5 @@ class MotifAnalyzer:
             S = np.sum(edge_product * l_product)
             combinatorial_factor = comb(n, motif_size, exact=False) * motif['factor']
             expected_motif_count = combinatorial_factor * (S ** k)
-            results[motif['name']] = expected_motif_count
+            results[motif['name']] = int(expected_motif_count) # A count of 0.4 is still 0 in most cases.
         return results
