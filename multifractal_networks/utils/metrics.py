@@ -146,19 +146,23 @@ def KL_divergence(truth, pred, debug=False):
     if not np.any(valid_indices):
         return np.inf if not debug else (np.inf, {'errors': [np.inf] * len(truth), 'cumulative_errors': [np.inf] * len(truth)})
 
-    # Calculate KL divergence terms only for valid indices
-    kl_terms = np.full_like(truth, None, dtype=object)
+    # Normalize the valid parts of the distributions
+    truth_valid = truth[valid_indices]
+    pred_valid = pred[valid_indices]
     
-    # Compute KL terms for valid indices
-    kl_terms[valid_indices] = truth[valid_indices] * np.log(truth[valid_indices] / pred[valid_indices])
+    truth_valid = truth_valid / np.sum(truth_valid)
+    pred_valid = pred_valid / np.sum(pred_valid)
 
-    # Calculate the total KL divergence ignoring None values
-    valid_kl_terms = np.array([x for x in kl_terms if x is not None and not np.isinf(x)])
-    kl_divergence = np.sum(valid_kl_terms)
+    # Calculate KL divergence terms
+    kl_terms = np.full_like(truth, None, dtype=object)
+    kl_terms[valid_indices] = truth_valid * np.log(truth_valid / pred_valid)
+
+    # Calculate total KL divergence
+    kl_divergence = np.sum(kl_terms[valid_indices])
 
     if debug:
         # Compute cumulative sum, treating None as 0
-        kl_terms_filled = np.nan_to_num(np.array(kl_terms, dtype=float))  # Treat None as 0
+        kl_terms_filled = np.nan_to_num(np.array(kl_terms, dtype=float))
         cumulative_kl = np.cumsum(kl_terms_filled)
         
         return (kl_divergence,
@@ -166,7 +170,6 @@ def KL_divergence(truth, pred, debug=False):
                  'cumulative_errors': cumulative_kl}
                )
 
-    # Return KL divergence if not in debug mode
     return kl_divergence
 
 # -------------------
