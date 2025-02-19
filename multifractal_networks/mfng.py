@@ -15,7 +15,7 @@ from itertools import combinations, product
 import concurrent.futures
 
 from multifractal_networks.utils.metrics import measure_degree_distribution, measure_nearest_neighbor_avg_degree
-from multifractal_networks.utils.metrics import analytical_degree_distribution, analytical_nearest_neighbor_avg_degree, MRE
+from multifractal_networks.utils.metrics import analytical_degree_distribution, analytical_nearest_neighbor_avg_degree, MRE, FNE
 from multifractal_networks.utils.metrics import MotifAnalyzer
 from multifractal_networks.utils.misc import find_max_d, find_min_d, kron_pow, correct_correlations, sort_state, keep_largest_component
 from multifractal_networks.utils.visualization import plot_curves, plot_metric, plot_motif_spectra
@@ -421,6 +421,7 @@ class MultifractalNetworkGenerator:
                       sampling_ratios = {3: 0.001,
                                          4: 0.00001},
                       motif_analyzer_args = {'exact': False, 'bootstrap_iters': None, 'ci': None}, # By default CI bootstrapping is skipped.
+                      use_new_motif_loss = False,
                       filename = None):
         if self.G is None:
             raise ValueError("Generate the network first!")
@@ -517,20 +518,36 @@ class MultifractalNetworkGenerator:
                         adj_matrices=[motif['matrix'] for motif in motifs_of_size],
                         names=[motif['name'] for motif in motifs_of_size]
                     )
-                    motif_analytical = analyzer.expected_number_of_motifs(self.P, self.l, self.k, self.N)
-                    motif_measured = results[motif_name]['count']
-                    motif['analytical_count'] = motif_analytical[motif_name]
-                    motif['count'] = motif_measured
-                    mre_motif = MRE(motif_measured, motif_analytical[motif_name])
-                    motif['MRE'] = mre_motif   
-                    # Optionally check for confidence intervals
-                    if 'count_ci_low' in results[motif_name] and 'count_ci_high' in results[motif_name]:
-                        motif_measured_low = results[motif_name]['count_ci_low']
-                        motif['MRE_ci_low'] = mre_motif * (1 - MRE(motif_measured, motif_measured_low))
-                        motif_measured_high = results[motif_name]['count_ci_high']
-                        motif['MRE_ci_high'] = mre_motif * (1 + MRE(motif_measured, motif_measured_high))
-                        if motif['MRE_ci_low'] > motif['MRE_ci_high']:
-                            motif['MRE_ci_low'], motif['MRE_ci_high'] = motif['MRE_ci_high'], motif['MRE_ci_low']
+                    if not use_new_motif_loss:
+                        motif_analytical = analyzer.expected_number_of_motifs(self.P, self.l, self.k, self.N)
+                        motif_measured = results[motif_name]['count']
+                        motif['analytical_count'] = motif_analytical[motif_name]
+                        motif['count'] = motif_measured
+                        mre_motif = MRE(motif_measured, motif_analytical[motif_name])
+                        motif['MRE'] = mre_motif   
+                        # Optionally check for confidence intervals
+                        if 'count_ci_low' in results[motif_name] and 'count_ci_high' in results[motif_name]:
+                            motif_measured_low = results[motif_name]['count_ci_low']
+                            motif['MRE_ci_low'] = mre_motif * (1 - MRE(motif_measured, motif_measured_low))
+                            motif_measured_high = results[motif_name]['count_ci_high']
+                            motif['MRE_ci_high'] = mre_motif * (1 + MRE(motif_measured, motif_measured_high))
+                            if motif['MRE_ci_low'] > motif['MRE_ci_high']:
+                                motif['MRE_ci_low'], motif['MRE_ci_high'] = motif['MRE_ci_high'], motif['MRE_ci_low']
+                    else:
+                        motif_analytical, motif_factors = analyzer.expected_number_of_motifs(self.P, self.l, self.k, self.N, return_factor = True)
+                        motif_measured = results[motif_name]['count']
+                        motif['analytical_count'] = motif_analytical[motif_name]
+                        motif['count'] = motif_measured
+                        mre_motif = FNE(motif_measured, motif_analytical[motif_name], motif_factors[motif_name])
+                        motif['MRE'] = mre_motif   
+                        # Optionally check for confidence intervals
+                        if 'count_ci_low' in results[motif_name] and 'count_ci_high' in results[motif_name]:
+                            motif_measured_low = results[motif_name]['count_ci_low']
+                            motif['MRE_ci_low'] = mre_motif * (1 - MRE(motif_measured, motif_measured_low))
+                            motif_measured_high = results[motif_name]['count_ci_high']
+                            motif['MRE_ci_high'] = mre_motif * (1 + MRE(motif_measured, motif_measured_high))
+                            if motif['MRE_ci_low'] > motif['MRE_ci_high']:
+                                motif['MRE_ci_low'], motif['MRE_ci_high'] = motif['MRE_ci_high'], motif['MRE_ci_low']
         # Plotting
         self.motifs = motifs
         plot_motif_spectra(motifs,

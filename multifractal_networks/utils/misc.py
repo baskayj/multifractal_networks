@@ -412,22 +412,19 @@ def find_new_k(N, P, l, k, avg_degree):
         new_k += 1
     return new_k
 
-def recommend_N_for_k_range(P, l, k, avg_degree, k_limit):
+def recommend_N_for_k_range(P, l, k, N, k_limit):
     """
     Returns the recommended N for each k in the range [k+1, k_limit].
     """
-
     def calculate_N(P, l, k, avg_degree):
-        """
-        Calculates the network size N for a given average degree.
-        """
-        P_k = kron_pow(P, k)
-        l_k = kron_pow(l, k)
-        edge_proba = np.sum(np.outer(l_k, l_k) * P_k)
-        return int(avg_degree / edge_proba)
+        base_prob = np.sum(np.outer(l, l) * P)
+        edge_proba = base_prob**k
+        return int((2 * avg_degree + 1) / edge_proba)
     
     recommendations = {}
     for new_k in range(k + 1, k_limit + 1):
+        base_prob = np.sum(np.outer(l, l) * P)
+        avg_degree = ((N-1)/2) * base_prob**k
         recommended_N = calculate_N(P, l, new_k, avg_degree)
         recommendations[new_k] = recommended_N
     return recommendations

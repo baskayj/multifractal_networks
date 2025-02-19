@@ -495,14 +495,18 @@ class MultifractalNetworkFitter:
         # degree distribution and correlation
         rho_analytical, _ = analytical_degree_distribution(P_k, l_k, self.N, self.rho_d_range)
         self.rho_analytical['medoid'] = rho_analytical
+        self.rho_analytical['mre'] = MRE(self.rho_measured, rho_analytical)
+        self.rho_analytical['kld'] = KL_divergence(self.rho_measured, rho_analytical)
         deg_nn_analytical,_ = analytical_nearest_neighbor_avg_degree(P_k, l_k, rho_analytical[self.dnn_index_range[0]:self.dnn_index_range[1]], self.N, self.dnn_d_range)
         self.deg_nn_analytical['medoid'] = deg_nn_analytical
+        self.deg_nn_analytical['mre'] = MRE(self.deg_nn_measured, deg_nn_analytical)
 
         #motifs
         for motif in self.motifs:
             motif_name = motif['name']
             analyzer = MotifAnalyzer(adj_matrices=[motif['matrix']], names=[motif_name])
             motif_analytical = analyzer.expected_number_of_motifs(P, l, self.k, self.N)
+            motif['expected_count'] = motif_analytical[motif_name]
             motif_measured = next(motif_dict['count'] for motif_dict in self.motifs if motif_dict['name'] == motif_name)
             mre_motif = MRE(motif_measured, motif_analytical[motif_name])
             motif['MRE'] = mre_motif    
@@ -711,63 +715,88 @@ class MultifractalNetworkFitter:
     
         # Separate candidates and energies
         resampled_best_candidates, resampled_best_energies = zip(*resampled_results)
-        resampled_best_candidates = np.array(resampled_best_candidates)
-        resampled_best_energies = np.array(resampled_best_energies)
-    
+        self.resampled_best_candidates = np.array(resampled_best_candidates)
+        self.resampled_best_energies = np.array(resampled_best_energies)
+
+        self._calculate_bootstrap_metrics(ci = ci, medoid = medoid)
+
+        # Set bootstrap to true, to tell the plotting functions to add the CI-s!
+        self.bootstrap = True
+
+    def _calculate_bootstrap_metrics(self, ci, medoid):
+        m = self.P.shape[0]
+        
         # Compute confidence intervals for P, l, and energy
         ci_low = (1 - ci) / 2 * 100
         ci_high = (ci + (1 - ci) / 2) * 100
 
         # Find the best state in the bunch
         if medoid == 'lowest':
-            lowest_index = np.argmin(resampled_best_energies)
-            
+            lowest_index = np.argmin(self.resampled_best_energies)
+
+        # Find the point estimate based on user choice
         if medoid == 'median':
-            medoid_state = np.median(resampled_best_candidates, axis=0)
+            medoid_state = np.median(self.resampled_best_candidates, axis=0)
         elif medoid == 'mean':
-            medoid_state = np.mean(resampled_best_candidates, axis=0)
+            medoid_state = np.mean(self.resampled_best_candidates, axis=0)
         elif medoid == 'lowest':
-            medoid_state = resampled_best_candidates[lowest_index]
+            medoid_state = self.resampled_best_candidates[lowest_index]
         P_medoid, l_medoid = unwrap_state(medoid_state, m, self.k, kronpow = False)
         
-        ci_low_state = np.percentile(resampled_best_candidates, ci_low, axis=0)
+        ci_low_state = np.percentile(self.resampled_best_candidates, ci_low, axis=0)
         P_ci_low, l_ci_low, P_k_low, l_k_low = unwrap_state(ci_low_state, m, self.k, kronpow = True)
         
-        ci_high_state = np.percentile(resampled_best_candidates, ci_high, axis=0)
+        ci_high_state = np.percentile(self.resampled_best_candidates, ci_high, axis=0)
         P_ci_high, l_ci_high, P_k_high, l_k_high = unwrap_state(ci_high_state, m, self.k, kronpow = True)
 
         if medoid == 'median':
-            energy_medoid = np.median(resampled_best_energies)
+            energy_medoid = np.median(self.resampled_best_energies)
         elif medoid == 'mean':
-            energy_medoid = np.mean(resampled_best_energies)
+            energy_medoid = np.mean(self.resampled_best_energies)
         elif medoid == 'lowest':
-            energy_medoid = resampled_best_energies[lowest_index]
+            energy_medoid = self.resampled_best_energies[lowest_index]
         
-        energy_ci_low = np.percentile(resampled_best_energies, ci_low)
+        energy_ci_low = np.percentile(self.resampled_best_energies, ci_low)
         if medoid == 'lowest' and energy_ci_low > energy_medoid:
             # No harm done.
             energy_ci_low = energy_medoid
-        energy_ci_high = np.percentile(resampled_best_energies, ci_high)
+        energy_ci_high = np.percentile(self.resampled_best_energies, ci_high)
 
         # Compute the CI-s for the metrics
         # Start by getting them for all 'resampled_best_candidates'
         resampled_rho_analyticals = []
+        resampled_rho_analytical_mres = []
+        resampled_rho_analytical_klds = []
         resampled_deg_nn_analyticals = []
+        resampled_deg_nn_analytical_mres = []
+        resampled_expected_counts = {motif['name']: [] for motif in self.motifs}
         resampled_mres = {motif['name']: [] for motif in self.motifs}
         if self.ground_truth:
+            resampled_ground_truth_rho_analytical_mres = []
+            resampled_ground_truth_rho_analytical_klds = []
+            resampled_ground_truth_deg_nn_analytical_mres = []
             resampled_ground_truth_mres = {motif['name']: [] for motif in self.motifs}
-        for resampled_state in resampled_best_candidates:
+        for resampled_state in self.resampled_best_candidates:
             P_resampled, l_resampled, P_k_resampled, l_k_resampled = unwrap_state(resampled_state, m, self.k, kronpow = True)
             # degree distribution and correlation
             resampled_rho_analytical, _ = analytical_degree_distribution(P_k_resampled, l_k_resampled, self.N, self.rho_d_range)
             resampled_rho_analyticals.append(resampled_rho_analytical)
+            resampled_rho_analytical_mres.append(MRE(self.rho_measured, resampled_rho_analytical))
+            resampled_rho_analytical_klds.append(KL_divergence(self.rho_measured, resampled_rho_analytical))
+            if self.ground_truth:
+                resampled_ground_truth_rho_analytical_mres.append(MRE(self.rho_analytical['ground_truth'], resampled_rho_analytical))
+                resampled_ground_truth_rho_analytical_klds.append(KL_divergence(self.rho_analytical['ground_truth'], resampled_rho_analytical))
             resampled_deg_nn_analytical,_ = analytical_nearest_neighbor_avg_degree(P_k_resampled, l_k_resampled, resampled_rho_analytical[self.dnn_index_range[0]:self.dnn_index_range[1]], self.N, self.dnn_d_range)
             resampled_deg_nn_analyticals.append(resampled_deg_nn_analytical)
+            resampled_deg_nn_analytical_mres.append(MRE(self.deg_nn_measured, resampled_deg_nn_analytical))
+            if self.ground_truth:
+                resampled_ground_truth_deg_nn_analytical_mres.append(MRE(self.deg_nn_analytical['ground_truth'], resampled_deg_nn_analytical))
             # MRE for motifs
             for motif in self.motifs:
                 motif_name = motif['name']
                 analyzer = MotifAnalyzer(adj_matrices=[motif['matrix']], names=[motif_name])
                 motif_analytical = analyzer.expected_number_of_motifs(P_resampled, l_resampled, self.k, self.N)
+                resampled_expected_counts[motif_name].append(motif_analytical[motif_name])
                 motif_measured = next(motif_dict['count'] for motif_dict in self.motifs if motif_dict['name'] == motif_name)
                 mre_motif = MRE(motif_measured, motif_analytical[motif_name])
                 resampled_mres[motif_name].append(mre_motif)
@@ -786,58 +815,143 @@ class MultifractalNetworkFitter:
                 
 
         resampled_rho_analyticals = np.array(resampled_rho_analyticals)
+        resampled_rho_analytical_mres = np.array(resampled_rho_analytical_mres)
+        resampled_rho_analytical_klds = np.array(resampled_rho_analytical_klds)
         resampled_deg_nn_analyticals = np.array(resampled_deg_nn_analyticals)
-        
+        resampled_deg_nn_analytical_mres = np.array(resampled_deg_nn_analytical_mres)
+        if self.ground_truth:
+            resampled_ground_truth_rho_analytical_mres = np.array(resampled_ground_truth_rho_analytical_mres)
+            resampled_ground_truth_rho_analytical_klds = np.array(resampled_ground_truth_rho_analytical_klds)
+            resampled_ground_truth_deg_nn_analytical_mres = np.array(resampled_ground_truth_deg_nn_analytical_mres)
         # Set the model results accordingly
         self.P, self.l = sort_state(P_medoid, l_medoid)
         if medoid == 'median':
             resampled_rho_analytical_medoid = np.median(resampled_rho_analyticals, axis=0)
+            resampled_rho_analytical_mre_medoid = np.median(resampled_rho_analytical_mres, axis=0)
+            resampled_rho_analytical_kld_medoid = np.median(resampled_rho_analytical_klds, axis=0)
             resampled_deg_nn_analytical_medoid = np.median(resampled_deg_nn_analyticals, axis=0)
+            resampled_deg_nn_analytical_mre_medoid = np.median(resampled_deg_nn_analytical_mres, axis=0)
+            if self.ground_truth:
+                resampled_ground_truth_rho_analytical_mre_medoid = np.median(resampled_ground_truth_rho_analytical_mres, axis=0)
+                resampled_ground_truth_rho_analytical_kld_medoid = np.median(resampled_ground_truth_rho_analytical_klds, axis=0)
+                resampled_ground_truth_deg_nn_analytical_mre_medoid = np.median(resampled_ground_truth_deg_nn_analytical_mres, axis=0)
         elif medoid == 'mean':
             resampled_rho_analytical_medoid = np.mean(resampled_rho_analyticals, axis=0)
+            resampled_rho_analytical_mre_medoid = np.mean(resampled_rho_analytical_mres, axis=0)
+            resampled_rho_analytical_kld_medoid = np.mean(resampled_rho_analytical_klds, axis=0)
             resampled_deg_nn_analytical_medoid = np.mean(resampled_deg_nn_analyticals, axis=0)
+            resampled_deg_nn_analytical_mre_medoid = np.mean(resampled_deg_nn_analytical_mres, axis=0)
+            if self.ground_truth:
+                resampled_ground_truth_rho_analytical_mre_medoid = np.mean(resampled_ground_truth_rho_analytical_mres, axis=0)
+                resampled_ground_truth_rho_analytical_kld_medoid = np.mean(resampled_ground_truth_rho_analytical_klds, axis=0)
+                resampled_ground_truth_deg_nn_analytical_mre_medoid = np.mean(resampled_ground_truth_deg_nn_analytical_mres, axis=0)                
         elif medoid == 'lowest':
             resampled_rho_analytical_medoid = resampled_rho_analyticals[lowest_index]
+            resampled_rho_analytical_mre_medoid = resampled_rho_analytical_mres[lowest_index]
+            resampled_rho_analytical_kld_medoid = resampled_rho_analytical_klds[lowest_index]
             resampled_deg_nn_analytical_medoid = resampled_deg_nn_analyticals[lowest_index]
+            resampled_deg_nn_analytical_mre_medoid = resampled_deg_nn_analytical_mres[lowest_index]
+            if self.ground_truth:
+                resampled_ground_truth_rho_analytical_mre_medoid = resampled_ground_truth_rho_analytical_mres[lowest_index]
+                resampled_ground_truth_rho_analytical_kld_medoid = resampled_ground_truth_rho_analytical_klds[lowest_index]
+                resampled_ground_truth_deg_nn_analytical_mre_medoid = resampled_ground_truth_deg_nn_analytical_mres[lowest_index]
         self.rho_analytical['medoid'] = resampled_rho_analytical_medoid
         self.rho_analytical['ci_low'] = np.percentile(resampled_rho_analyticals, ci_low, axis=0)
         self.rho_analytical['ci_high'] = np.percentile(resampled_rho_analyticals, ci_high, axis=0)
         self.rho_analytical['confidence_level'] = ci
+        self.rho_analytical['mre'] = resampled_rho_analytical_mre_medoid
+        self.rho_analytical['mre_ci_high'] = np.percentile(resampled_rho_analytical_mres, ci_high, axis=0)
+        self.rho_analytical['mre_ci_low'] = np.percentile(resampled_rho_analytical_mres, ci_low, axis=0)
+        if self.rho_analytical['mre_ci_low'] > self.rho_analytical['mre_ci_high']:
+            self.rho_analytical['mre_ci_low'], self.rho_analytical['mre_ci_high'] = self.rho_analytical['mre_ci_high'], self.rho_analytical['mre_ci_low']
+        if medoid == 'lowest' and self.rho_analytical['mre_ci_low'] > self.rho_analytical['mre']:
+            self.rho_analytical['mre_ci_low'] = self.rho_analytical['mre']
+        if self.ground_truth:
+            self.rho_analytical['ground_truth_mre'] = resampled_ground_truth_rho_analytical_mre_medoid
+            self.rho_analytical['ground_truth_mre_ci_high'] = np.percentile(resampled_ground_truth_rho_analytical_mres, ci_high, axis=0)
+            self.rho_analytical['ground_truth_mre_ci_low'] = np.percentile(resampled_ground_truth_rho_analytical_mres, ci_low, axis=0)
+            if self.rho_analytical['ground_truth_mre_ci_low'] > self.rho_analytical['ground_truth_mre_ci_high']:
+                self.rho_analytical['ground_truth_mre_ci_low'], self.rho_analytical['ground_truth_mre_ci_high'] = self.rho_analytical['ground_truth_mre_ci_high'], self.rho_analytical['ground_truth_mre_ci_low']
+            if medoid == 'lowest' and self.rho_analytical['ground_truth_mre_ci_low'] > self.rho_analytical['ground_truth_mre']:
+                self.rho_analytical['ground_truth_mre_ci_low'] = self.rho_analytical['ground_truth_mre']
+        self.rho_analytical['kld'] = resampled_rho_analytical_kld_medoid
+        self.rho_analytical['kld_ci_high'] = np.percentile(resampled_rho_analytical_klds, ci_high, axis=0)
+        self.rho_analytical['kld_ci_low'] = np.percentile(resampled_rho_analytical_klds, ci_low, axis=0)
+        if self.rho_analytical['kld_ci_low'] > self.rho_analytical['kld_ci_high']:
+            self.rho_analytical['kld_ci_low'], self.rho_analytical['kld_ci_high'] = self.rho_analytical['kld_ci_high'], self.rho_analytical['kld_ci_low']
+        if self.ground_truth:
+            self.rho_analytical['ground_truth_kld'] = resampled_ground_truth_rho_analytical_kld_medoid
+            self.rho_analytical['ground_truth_kld_ci_high'] = np.percentile(resampled_ground_truth_rho_analytical_klds, ci_high, axis=0)
+            self.rho_analytical['ground_truth_kld_ci_low'] = np.percentile(resampled_ground_truth_rho_analytical_klds, ci_low, axis=0)
+            if self.rho_analytical['ground_truth_kld_ci_low'] > self.rho_analytical['ground_truth_kld_ci_high']:
+                self.rho_analytical['ground_truth_kld_ci_low'], self.rho_analytical['ground_truth_kld_ci_high'] = self.rho_analytical['ground_truth_kld_ci_high'], self.rho_analytical['ground_truth_kld_ci_low']
+            if medoid == 'lowest' and self.rho_analytical['ground_truth_kld_ci_low'] > self.rho_analytical['ground_truth_kld']:
+                self.rho_analytical['ground_truth_kld_ci_low'] = self.rho_analytical['ground_truth_kld']            
+        if medoid == 'lowest' and self.rho_analytical['kld_ci_low'] > self.rho_analytical['kld']:
+            self.rho_analytical['kld_ci_low'] = self.rho_analytical['kld']
         self.deg_nn_analytical['medoid'] = resampled_deg_nn_analytical_medoid
         self.deg_nn_analytical['ci_low'] = np.percentile(resampled_deg_nn_analyticals, ci_low, axis=0)
         self.deg_nn_analytical['ci_high'] = np.percentile(resampled_deg_nn_analyticals, ci_high, axis=0)
         self.deg_nn_analytical['confidence_level'] = ci
+        self.deg_nn_analytical['mre'] = resampled_deg_nn_analytical_mre_medoid
+        self.deg_nn_analytical['mre_ci_high'] = np.percentile(resampled_deg_nn_analytical_mres, ci_high, axis=0)
+        self.deg_nn_analytical['mre_ci_low'] = np.percentile(resampled_deg_nn_analytical_mres, ci_low, axis=0)
+        if self.deg_nn_analytical['mre_ci_low'] > self.deg_nn_analytical['mre_ci_high']:
+            self.deg_nn_analytical['mre_ci_low'], self.deg_nn_analytical['mre_ci_high'] = self.deg_nn_analytical['mre_ci_high'], self.deg_nn_analytical['mre_ci_low']
+        if medoid == 'lowest' and self.deg_nn_analytical['mre_ci_low'] > self.deg_nn_analytical['mre']:
+            self.deg_nn_analytical['mre_ci_low'] = self.deg_nn_analytical['mre']
+        if self.ground_truth:
+            self.deg_nn_analytical['ground_truth_mre'] = resampled_ground_truth_deg_nn_analytical_mre_medoid
+            self.deg_nn_analytical['ground_truth_mre_ci_high'] = np.percentile(resampled_ground_truth_deg_nn_analytical_mres, ci_high, axis=0)
+            self.deg_nn_analytical['ground_truth_mre_ci_low'] = np.percentile(resampled_ground_truth_deg_nn_analytical_mres, ci_low, axis=0)
+            if self.deg_nn_analytical['ground_truth_mre_ci_low'] > self.deg_nn_analytical['ground_truth_mre_ci_high']:
+                self.deg_nn_analytical['ground_truth_mre_ci_low'], self.deg_nn_analytical['ground_truth_mre_ci_high'] = self.deg_nn_analytical['ground_truth_mre_ci_high'], self.deg_nn_analytical['ground_truth_mre_ci_low']
+            if medoid == 'lowest' and self.deg_nn_analytical['ground_truth_mre_ci_low'] > self.deg_nn_analytical['ground_truth_mre']:
+                self.deg_nn_analytical['ground_truth_mre_ci_low'] = self.deg_nn_analytical['ground_truth_mre']
         # Including the motifs...
         for motif in self.motifs:
             motif_name = motif['name']
+            _resempled_expected_counts = np.array(resampled_expected_counts[motif_name])
             _resampled_mres = np.array(resampled_mres[motif_name])
             if self.ground_truth:
                 _resampled_ground_truth_mres = np.array(resampled_ground_truth_mres[motif_name])
             if medoid == 'median':
+                motif['expected_count'] = np.median(_resempled_expected_counts)
                 motif['MRE'] = np.median(_resampled_mres)
                 if self.ground_truth:
                     motif['fit_ground_truth_MRE'] = np.median(_resampled_ground_truth_mres)
             elif medoid == 'mean':
+                motif['expected_count'] = np.mean(_resempled_expected_counts)
                 motif['MRE'] = np.mean(_resampled_mres)
                 if self.ground_truth:
                     motif['fit_ground_truth_MRE'] = np.mean(_resampled_ground_truth_mres)
             elif medoid == 'lowest':
+                motif['expected_count'] = _resempled_expected_counts[lowest_index]
                 motif['MRE'] = _resampled_mres[lowest_index]
                 if self.ground_truth:
                     motif['fit_ground_truth_MRE'] = _resampled_ground_truth_mres[lowest_index]
+            # CI for counts
+            motif['expected_count_ci_low'] = np.percentile(_resempled_expected_counts, ci_low)
+            motif['expected_count_ci_high'] = np.percentile(_resempled_expected_counts, ci_high)
+            if motif['expected_count_ci_low'] > motif['expected_count_ci_high']:
+                motif['expected_count_ci_low'], motif['expected_count_ci_high'] = motif['expected_count_ci_high'], motif['expected_count_ci_low']
+            if medoid == 'lowest' and motif['expected_count_ci_low'] > motif['expected_count']:
+                motif['expected_count_ci_low'] = motif['expected_count']
+            # CI for errors
             motif['MRE_ci_low'] = np.percentile(_resampled_mres, ci_low)
             motif['MRE_ci_high'] = np.percentile(_resampled_mres, ci_high)
             if motif['MRE_ci_low'] > motif['MRE_ci_high']:
                 motif['MRE_ci_low'], motif['MRE_ci_high'] = motif['MRE_ci_high'], motif['MRE_ci_low']
+            if medoid == 'lowest' and motif['MRE_ci_low'] > motif['MRE']:
+                motif['MRE_ci_low'] = motif['MRE']
             if self.ground_truth:
                 motif['fit_ground_truth_MRE_ci_low'] = np.percentile(_resampled_ground_truth_mres, ci_low)
                 motif['fit_ground_truth_MRE_ci_high'] = np.percentile(_resampled_ground_truth_mres, ci_high)
                 if motif['fit_ground_truth_MRE_ci_low'] > motif['fit_ground_truth_MRE_ci_high']:
                     motif['fit_ground_truth_MRE_ci_low'], motif['fit_ground_truth_MRE_ci_high'] = motif['fit_ground_truth_MRE_ci_high'], motif['fit_ground_truth_MRE_ci_low']
-            
-        # Set bootstrap to true, to tell the plotting functions to add the CI-s!
-        self.bootstrap = True
-    
+                if medoid == 'lowest' and motif['fit_ground_truth_MRE_ci_low'] > motif['fit_ground_truth_MRE']:
+                    motif['fit_ground_truth_MRE_ci_low'] = motif['fit_ground_truth_MRE']
+
         # Print results
         print(f"Energy = {energy_medoid:.2f} ({energy_ci_low:.2f}, {energy_ci_high:.2f})")
         
@@ -860,10 +974,6 @@ class MultifractalNetworkFitter:
                 print(",\n")
         print("\n]")
 
-        # Save the resampled states for ground_truth calculation, if ground_truth is not yet set:
-        if self.ground_truth is None:
-            self.bootstrap_states = resampled_best_candidates
-
     def set_ground_truth(self, P, l, k,
                          ci = 0.95,
                          medoid = 'mean'):
@@ -884,15 +994,18 @@ class MultifractalNetworkFitter:
         # degree distribution and correlation
         rho_analytical, _ = analytical_degree_distribution(self.ground_truth['P_k'], self.ground_truth['l_k'], self.N, self.rho_d_range)
         self.rho_analytical['ground_truth'] = rho_analytical
+        self.rho_analytical['ground_truth_mre'] = MRE(self.rho_measured, rho_analytical)
+        self.rho_analytical['ground_truth_kld'] = KL_divergence(self.rho_measured, rho_analytical)
         deg_nn_analytical,_ = analytical_nearest_neighbor_avg_degree(self.ground_truth['P_k'], self.ground_truth['l_k'], rho_analytical[self.dnn_index_range[0]:self.dnn_index_range[1]], self.N, self.dnn_d_range)
         self.deg_nn_analytical['ground_truth'] = deg_nn_analytical
+        self.deg_nn_analytical['ground_truth_mre'] = MRE(self.deg_nn_measured, deg_nn_analytical)
         #motifs
         for motif in self.motifs:
             # ground truth vs measured
             motif_name = motif['name']
             analyzer = MotifAnalyzer(adj_matrices=[motif['matrix']], names=[motif_name])
             motif_analytical = analyzer.expected_number_of_motifs(self.ground_truth['P'], self.ground_truth['l'], self.ground_truth['k'], self.N)
-            motif['ground_truth_analytical'] = motif_analytical
+            motif['ground_truth_analytical'] = motif_analytical[motif_name]
             motif_measured = next(motif_dict['count'] for motif_dict in self.motifs if motif_dict['name'] == motif_name)
             mre_motif = MRE(motif_measured, motif_analytical[motif_name])
             motif['ground_truth_MRE'] = mre_motif   
@@ -931,6 +1044,7 @@ class MultifractalNetworkFitter:
                         grid = False,
                         display_mre = True,
                         display_kld = False,
+                        plot_ground_truth = False,
                         plot_cumulative_error = False,
                         filename = None,
                         xlim = None,
@@ -979,7 +1093,7 @@ class MultifractalNetworkFitter:
             rho_analytical_ci = self.rho_analytical
             deg_nn_analytical = self.deg_nn_analytical['medoid']
             deg_nn_analytical_ci = self.deg_nn_analytical
-            if self.ground_truth:
+            if self.ground_truth and plot_ground_truth:
                 rho_ground_truth = self.rho_analytical['ground_truth']
                 deg_nn_ground_truth = self.deg_nn_analytical['ground_truth']
             else:
@@ -990,7 +1104,7 @@ class MultifractalNetworkFitter:
             rho_analytical_ci = None
             deg_nn_analytical = self.deg_nn_analytical['medoid']
             deg_nn_analytical_ci = None
-            if self.ground_truth:
+            if self.ground_truth and plot_ground_truth:
                 rho_ground_truth = self.rho_analytical['ground_truth']
                 deg_nn_ground_truth = self.deg_nn_analytical['ground_truth']
             else:
@@ -1001,6 +1115,7 @@ class MultifractalNetworkFitter:
         fig1 = plot_curves(np.arange(self.rho_d_range[0], self.rho_d_range[1] + 1),
                     self.rho_measured,
                     rho_analytical,
+                    self.rho_analytical,
                     xlabel='d',
                     ylabel=r'$\rho^{k}(d)$',
                     log_scale=log_scale,
@@ -1017,6 +1132,7 @@ class MultifractalNetworkFitter:
         fig2 = plot_curves(np.arange(self.dnn_d_range[0], self.dnn_d_range[1] + 1),
                     self.deg_nn_measured,
                     deg_nn_analytical,
+                    self.deg_nn_analytical,
                     xlabel='d',
                     ylabel=r'$d^{NN}(d)$',
                     log_scale=log_scale,
@@ -1031,6 +1147,7 @@ class MultifractalNetworkFitter:
     
         # Plot motif spectra
         fig3 = plot_motif_spectra(self.motifs,
+                                  plot_ground_truth = plot_ground_truth,
                                   plot_cumulative_error=plot_cumulative_error,
                                   log_scale=log_scale,
                                   filename=filename_motifs,

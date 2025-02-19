@@ -137,7 +137,7 @@ def plot_metric(P_k, l_k,
         plt.show()
         return None
 
-def plot_curves(d, measured, analytical,
+def plot_curves(d, measured, analytical, analytical_errors, 
                 xlabel = 'x',
                 ylabel = 'y',
                 title = None,
@@ -165,6 +165,8 @@ def plot_curves(d, measured, analytical,
         The measured values corresponding to `d`.
     analytical : array-like
         The analytical or expected values corresponding to `d`.
+    analytical_errors : dict
+        Contains the erros (mre and kld) for the curves. With optional CI-s.
     xlabel : str, optional
         Label for the x-axis. Default is 'x'.
     ylabel : str, optional
@@ -206,9 +208,9 @@ def plot_curves(d, measured, analytical,
     
     # Plot the main curves
     ax1.plot(d, measured, label='Measured', color='#006BA4', alpha=0.7, marker='.', linestyle='')
-    if ground_truth is not None:
-        ax1.plot(d, ground_truth, label='Ground Truth', color='#006BA4')
-    ax1.plot(d, analytical, label='Analytical', color='#FF800E')
+    if (ground_truth is not None):
+        ax1.plot(d, ground_truth, label='Ground Truth (GT)', color='#006BA4')
+    ax1.plot(d, analytical, label='Analytical (Fit)', color='#FF800E')
 
     # Plot confidence intervals if provided
     if analytical_ci is not None:
@@ -241,15 +243,15 @@ def plot_curves(d, measured, analytical,
         if display_mre:
             mre_value, mre_debug = MRE(measured, analytical, debug=True)
             if display_cumulative:
-                ax2.plot(d, mre_debug['cumulative_errors'], color='#ABABAB', linestyle='--', label='Cumulative MRE Errors')
+                ax2.plot(d, mre_debug['cumulative_errors'], color='#5F9ED1', linestyle='--', label='Cumulative MRE Errors')
             else:
-                ax2.plot(d, mre_debug['errors'], color='#ABABAB', marker='.', linestyle='', label='MRE Errors')
+                ax2.plot(d, mre_debug['errors'], color='#5F9ED1', marker='.', linestyle='', label='MRE Errors')
         elif display_kld:
             kld_value, kld_debug = KL_divergence(measured, analytical, debug=True)
             if display_cumulative:
-                ax2.plot(d, kld_debug['cumulative_errors'], color='#ABABAB', linestyle='--', label='Cumulative KLD Errors')
+                ax2.plot(d, kld_debug['cumulative_errors'], color='#5F9ED1', linestyle='--', label='Cumulative KLD Errors')
             else:
-                ax2.plot(d, kld_debug['errors'], color='#ABABAB', marker='.', linestyle='', label='KLD Errors')
+                ax2.plot(d, kld_debug['errors'], color='#5F9ED1', marker='.', linestyle='', label='KLD Errors')
 
         ax2.legend(loc='upper right')
 
@@ -275,23 +277,27 @@ def plot_curves(d, measured, analytical,
     
     if not debug:
         # Determine vertical positioning based on which metrics are displayed
-        base_y_position = 0.07  # Lower base position
+        if ground_truth is not None:
+            base_y_position = 0.11
+        else:
+            base_y_position = 0.07
         annotation_gap = 0.08   # Gap between annotations when both present
         # Calculate y positions based on what's being displayed
-        if display_mre and display_kld:
+        if display_mre and display_kld and not (ground_truth is not None):
             mre_y_position = base_y_position + annotation_gap
             kld_y_position = base_y_position
+        elif display_mre and display_kld and (ground_truth is not None):
+            kld_y_position = base_y_position
+            mre_y_position = base_y_position + 1.60 * annotation_gap
         else:
             # If only one is displayed, use the base position
             single_y_position = base_y_position
         if display_mre:
-            mre_value = MRE(measured, analytical)
+            mre_value = analytical_errors['mre']
             # Check if CI exists, calculate MRE for CI
             if analytical_ci is not None and 'ci_low' in analytical_ci and 'ci_high' in analytical_ci:
-                mre_ci_low = MRE(measured, analytical_ci['ci_low'])
-                mre_ci_high = MRE(measured, analytical_ci['ci_high'])
-                if mre_ci_low > mre_ci_high:
-                    mre_ci_low, mre_ci_high = mre_ci_high, mre_ci_low
+                mre_ci_low = analytical_errors['mre_ci_low']
+                mre_ci_high = analytical_errors['mre_ci_high']
                 if confidence_str is not None:
                     mre_str = f'MRE: {mre_value:.3f} ({confidence_str}: {mre_ci_low:.3f} - {mre_ci_high:.3f})'
                 else:
@@ -300,28 +306,28 @@ def plot_curves(d, measured, analytical,
                 mre_str = f'MRE: {mre_value:.3f}'
             # If ground_truth is present add it!
             if ground_truth is not None:
-                mre_gt = MRE(ground_truth, analytical)
+                mre_gt = analytical_errors['ground_truth_mre']
                 if analytical_ci is not None and 'ci_low' in analytical_ci and 'ci_high' in analytical_ci:
-                    mre_gt_ci_low = MRE(ground_truth, analytical_ci['ci_low'])
-                    mre_gt_ci_high = MRE(ground_truth, analytical_ci['ci_high'])
+                    mre_gt_ci_low = analytical_errors['ground_truth_mre_ci_low']
+                    mre_gt_ci_high = analytical_errors['ground_truth_mre_ci_high']
                     if mre_gt_ci_low > mre_gt_ci_high:
                         mre_gt_ci_low, mre_gt_ci_high = mre_gt_ci_high, mre_gt_ci_low
                     if confidence_str is not None:
-                        mre_str += f'\nMRE (vs GT): {mre_gt:.3f} ({confidence_str}: {mre_gt_ci_low:.3f} - {mre_gt_ci_high:.3f})'
+                        mre_str += f'\nMRE (Fit vs. GT): {mre_gt:.3f} ({confidence_str}: {mre_gt_ci_low:.3f} - {mre_gt_ci_high:.3f})'
                     else:
-                        mre_str += f'\nMRE (vs GT): {mre_gt:.3f} (CI: {mre_gt_ci_low:.3f} - {mre_gt_ci_high:.3f})'
+                        mre_str += f'\nMRE (Fit vs. GT): {mre_gt:.3f} (CI: {mre_gt_ci_low:.3f} - {mre_gt_ci_high:.3f})'
                 else:
-                    mre_str += f'\nMRE (vs GT): {mre_gt:.3f}'
+                    mre_str += f'\nMRE (Fit vs. GT): {mre_gt:.3f}'
 
             ax1.annotate(mre_str, xy=(0.02, mre_y_position if display_kld else single_y_position), xycoords='axes fraction',
                         fontsize=12, verticalalignment='top',
                         bbox=dict(boxstyle="round,pad=0.3", edgecolor="gray", facecolor="white", alpha=0.8))
         if display_kld:
-            kld_value = KL_divergence(measured, analytical)
+            kld_value = analytical_errors['kld']
             # Check if CI exists, calculate KLD for CI
             if analytical_ci is not None and 'ci_low' in analytical_ci and 'ci_high' in analytical_ci:
-                kld_ci_low = KL_divergence(measured, analytical_ci['ci_low'])
-                kld_ci_high = KL_divergence(measured, analytical_ci['ci_high'])
+                kld_ci_low = analytical_errors['kld_ci_low']
+                kld_ci_high = analytical_errors['kld_ci_high']
                 if kld_ci_low > kld_ci_high:
                     kld_ci_low, kld_ci_high = kld_ci_high, kld_ci_low
                 # Handle confidence level interpretation
@@ -333,19 +339,19 @@ def plot_curves(d, measured, analytical,
                 kld_str = f'KL Divergence: {kld_value:.3f}'
             # If ground_truth is present, calculate KLD for it
             if ground_truth is not None:
-                kld_gt = KL_divergence(ground_truth, analytical)
+                kld_gt = analytical_errors['ground_truth_kld']
                 # If CI exists, calculate KLD for ground_truth vs CI
                 if analytical_ci is not None and 'ci_low' in analytical_ci and 'ci_high' in analytical_ci:
-                    kld_gt_ci_low = KL_divergence(ground_truth, analytical_ci['ci_low'])
-                    kld_gt_ci_high = KL_divergence(ground_truth, analytical_ci['ci_high'])
+                    kld_gt_ci_low = analytical_errors['ground_truth_kld_ci_low']
+                    kld_gt_ci_high = analytical_errors['ground_truth_kld_ci_high']
                     if kld_gt_ci_low > kld_gt_ci_high:
                         kld_gt_ci_low, kld_gt_ci_high = kld_gt_ci_high, kld_gt_ci_low
                     if confidence_str is not None:
-                        kld_str += f'\nKL Divergence (vs GT): {kld_gt:.3f} ({confidence_str}: {kld_gt_ci_low:.3f} - {kld_gt_ci_high:.3f})'
+                        kld_str += f'\nKL Divergence (Fit vs. GT): {kld_gt:.3f} ({confidence_str}: {kld_gt_ci_low:.3f} - {kld_gt_ci_high:.3f})'
                     else:
-                        kld_str += f'\nKL Divergence (vs GT): {kld_gt:.3f} (CI: {kld_gt_ci_low:.3f} - {kld_gt_ci_high:.3f})'
+                        kld_str += f'\nKL Divergence (Fit vs. GT): {kld_gt:.3f} (CI: {kld_gt_ci_low:.3f} - {kld_gt_ci_high:.3f})'
                 else:
-                    kld_str += f'\nKL Divergence (vs GT): {kld_gt:.3f}'
+                    kld_str += f'\nKL Divergence (Fit vs. GT): {kld_gt:.3f}'
                     
             ax1.annotate(kld_str, xy=(0.02, kld_y_position if display_mre else single_y_position), xycoords='axes fraction',
                         fontsize=12, verticalalignment='top',
@@ -365,6 +371,7 @@ def plot_curves(d, measured, analytical,
         return None
 
 def plot_motif_spectra(all_motifs,
+                       plot_ground_truth = False,
                        plot_cumulative_error = False,
                        log_scale = False,
                        filename = None,
@@ -417,31 +424,51 @@ def plot_motif_spectra(all_motifs,
     # Iterate through motifs to collect data and drawings
     for idx, motif in enumerate(all_motifs):
         motif_name = motif['name']
-        mres.append(motif['MRE'])
+        if motif['count'] == 0 and motif['expected_count'] == 0:
+            mres.append(0)
+        else:
+            mres.append(motif['MRE'])
         motif_names.append(motif_name)
         if 'MRE_ci_low' in motif and 'MRE_ci_high' in motif:
-            l = motif['MRE'] - motif['MRE_ci_low']
-            l = l if l >= 0 else abs(l) # Negative values for yerr are forbidden
-            h = motif['MRE_ci_high'] - motif['MRE']
-            h = h if h >= 0 else abs(h) # Negative values for yerr are forbidden
-            ci_low.append(l)
-            ci_high.append(h)
-            has_ci = True
+            if motif['count'] == 0 and motif['expected_count'] == 0:
+                l = 0
+                h = motif['MRE_ci_high']
+                ci_low.append(l)
+                ci_high.append(h)
+                has_ci = True
+            else:
+                l = motif['MRE'] - motif['MRE_ci_low']
+                l = l if l >= 0 else abs(l) # Negative values for yerr are forbidden
+                h = motif['MRE_ci_high'] - motif['MRE']
+                h = h if h >= 0 else abs(h) # Negative values for yerr are forbidden
+                ci_low.append(l)
+                ci_high.append(h)
+                has_ci = True
         else:
             ci_low.append(0)
             ci_high.append(0)
         # Check for the presence of GT MRE and FIT GT MRE
         if 'ground_truth_MRE' in motif:
-            mres_gt.append(motif['ground_truth_MRE'])
+            if motif['count'] == 0 and motif['ground_truth_analytical'] == 0:
+                mres_gt.append(0)
+            else:
+                mres_gt.append(motif['ground_truth_MRE'])
             gt = True
             if 'ground_truth_MRE_ci_low' in motif and 'ground_truth_MRE_ci_high' in motif:
-                l = motif['ground_truth_MRE'] - motif['ground_truth_MRE_ci_low']
-                l = l if l >= 0 else abs(l) # Negative values for yerr are forbidden 
-                h = motif['ground_truth_MRE_ci_high'] - motif['ground_truth_MRE']
-                h = h if h >= 0 else abs(h) # Negative values for yerr are forbidden
-                gt_ci_low.append(l)
-                gt_ci_high.append(h)
-                gt_has_ci = True
+                if motif['count'] == 0 and motif['ground_truth_analytical'] == 0:
+                    l = 0
+                    h = motif['ground_truth_MRE_ci_high']
+                    ci_low.append(l)
+                    ci_high.append(h)
+                    has_ci = True
+                else:
+                    l = motif['ground_truth_MRE'] - motif['ground_truth_MRE_ci_low']
+                    l = l if l >= 0 else abs(l) # Negative values for yerr are forbidden 
+                    h = motif['ground_truth_MRE_ci_high'] - motif['ground_truth_MRE']
+                    h = h if h >= 0 else abs(h) # Negative values for yerr are forbidden
+                    gt_ci_low.append(l)
+                    gt_ci_high.append(h)
+                    gt_has_ci = True
             else:
                 gt_ci_low.append(0)
                 gt_ci_high.append(0)
@@ -478,7 +505,7 @@ def plot_motif_spectra(all_motifs,
     fit_gt_ci_low = np.array(fit_gt_ci_low)
     fit_gt_ci_high = np.array(fit_gt_ci_high)
 
-    if gt:
+    if gt and plot_ground_truth:
         if gt_has_ci:
             ax.errorbar(x, mres_gt, yerr=[gt_ci_low, gt_ci_high], fmt='s', capsize=5, label = 'Measured vs. Ground Truth')
         else:

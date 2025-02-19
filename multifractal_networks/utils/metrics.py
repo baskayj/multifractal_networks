@@ -67,7 +67,13 @@ def MRE(truth, pred, debug=False):
     # Identify valid indices where neither truth nor pred is NaN and neither is zero
     both_zero = (truth == 0) & (pred == 0)
     #either_zero = ((truth == 0) | (pred == 0)) & ~both_zero
-    invalid = np.isnan(pred) | np.isnan(truth) | np.isinf(pred) | np.isinf(truth)
+    try:
+        invalid = np.isnan(pred) | np.isnan(truth) | np.isinf(pred) | np.isinf(truth)
+    except TypeError:
+        #print(f"Debug info - pred type: {type(pred)}, truth type: {type(truth)}")
+        #print(f"pred shape: {np.asarray(pred).shape}, truth shape: {np.asarray(truth).shape}")
+        #print(f"pred value: {pred}, truth value: {truth}")
+        invalid = np.zeros_like(np.asarray(pred), dtype=bool) # Large integers are the problem, but they are actually neither NaN nor Inf.
     #valid_indices = ~ (either_zero | invalid | both_zero)
     valid_indices = ~ (invalid | both_zero)
 
@@ -75,13 +81,37 @@ def MRE(truth, pred, debug=False):
     relative_errors = np.full_like(truth, 1.0, dtype=float)
     
     # Set zero error where both values are zero
-    relative_errors[both_zero] = 0.0
+    # relative_errors[both_zero] = 0.0
 
     # Compute relative errors for valid indices
     if np.any(valid_indices):
         numerator = np.abs(truth[valid_indices] - pred[valid_indices])
         denominator = np.maximum(truth[valid_indices], pred[valid_indices])
         relative_errors[valid_indices] = numerator / denominator
+
+    # Calculate mean including zeros from both_zero cases
+    mean_relative_error = np.mean(relative_errors)
+
+    if debug:
+        cumsum = np.cumsum(relative_errors)
+        return (mean_relative_error, {'errors': relative_errors, 'cumulative_errors': cumsum})
+
+    return mean_relative_error
+
+def FNE(truth, pred, factor, debug=False):
+    """
+    Factor normalized error. Use the maximal possible number given a fully connected graph.
+    """
+    # Convert inputs to numpy arrays if they are scalar (float or int)
+    truth = np.asarray(truth) if np.ndim(truth) > 0 else np.array([truth])
+    pred = np.asarray(pred) if np.ndim(pred) > 0 else np.array([pred])
+
+    # Set negative values to zero.
+    truth = np.where(truth < 0, 0, truth)
+    pred = np.where(pred < 0, 0, pred)
+
+    numerator = np.abs(truth - pred)
+    relative_errors = numerator / factor
 
     # Calculate mean including zeros from both_zero cases
     mean_relative_error = np.mean(relative_errors)
@@ -932,22 +962,53 @@ class MotifAnalyzer:
         automorphisms = sum(1 for _ in matcher.isomorphisms_iter())
         return automorphisms
 
-    def expected_number_of_motifs(self, P, l, k, n):
+    def expected_number_of_motifs(self, P, l, k, n, return_factor = False):
         '''Calculate the expexted number of motifs in a Multifractal Network.'''
         motif_size = self.motifs[0]['adj_mat'].shape[0]
         results = {}
+        if return_factor: 
+            combinatorial_factors = {}
         for motif in self.motifs:
             m = P.shape[0]
-            all_indices = np.array(np.meshgrid(*[np.arange(m)] * motif_size, indexing='ij'))
-            all_indices = all_indices.reshape(motif_size, -1)
-            upper_tri_mask = np.triu(motif['adj_mat'], k=1)
-            edge_indices = np.where(upper_tri_mask == 1)
-            i_edges, j_edges = edge_indices
-            P_values = P[all_indices[i_edges][:, np.newaxis], all_indices[j_edges][:, np.newaxis]]
-            edge_product = np.prod(P_values, axis=0) 
-            l_product = np.prod(l[all_indices], axis=0)
-            S = np.sum(edge_product * l_product)
-            combinatorial_factor = comb(n, motif_size, exact=False) * motif['factor']
-            expected_motif_count = combinatorial_factor * (S ** k)
+
+            # Special case for edges (motif_size == 2)
+            if motif_size == 2 and np.sum(motif['adj_mat']) == 2:  # Standard edge adjacency matrix has sum 2
+                # For edges, directly calculate using the formula
+                S = np.sum(P * np.outer(l, l))
+                combinatorial_factor = comb(n, 2, exact=False)
+                expected_motif_count = combinatorial_factor * (S ** k)
+            
+            else:
+                all_indices = np.array(np.meshgrid(*[np.arange(m)] * motif_size, indexing='ij'))
+                all_indices = all_indices.reshape(motif_size, -1)
+                edge_indices = np.where(motif['adj_mat'] > 0)
+                i_edges, j_edges = edge_indices
+                # Only use unique edges (upper triangular) for undirected graph
+                unique_edges = {}
+                for i, j in zip(i_edges, j_edges):
+                    if i < j:
+                        unique_edges[(i, j)] = 1
+                
+                if unique_edges:
+                    i_edges, j_edges = zip(*unique_edges.keys())
+                    i_edges, j_edges = np.array(i_edges), np.array(j_edges)
+                    
+                    P_values = P[all_indices[i_edges][:, np.newaxis], all_indices[j_edges][:, np.newaxis]]
+                    edge_product = np.prod(P_values, axis=0)
+                    l_product = np.prod(l[all_indices], axis=0)
+                    S = np.sum(edge_product * l_product)
+                    combinatorial_factor = comb(n, motif_size, exact=False) * motif['factor']
+                    expected_motif_count = combinatorial_factor * (S ** k)
+                
+                else:
+                    # Handle the case of a motif with no edges
+                    expected_motif_count = 0
+                    
             results[motif['name']] = int(expected_motif_count) # A count of 0.4 is still 0 in most cases.
-        return results
+                
+            if return_factor:
+                combinatorial_factors[motif['name']] = combinatorial_factor
+        if return_factor:
+            return results, combinatorial_factors
+        else:
+            return results
