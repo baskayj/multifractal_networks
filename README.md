@@ -2,13 +2,9 @@
 
 A Python framework for analyzing and modeling complex networks using multifractal measures. This tool allows you to:
 - Fit multifractal measures to real-world networks
-  ![Measure Example](measure_placeholder.png)
 - Analyze network motifs and structural patterns
-  ![Motifs Example](motifs_placeholder.png)
 - Create statistically similar network variants
-  ![Synthetic Network Example](synth_net_placeholder.png)
 - Estimate uncertainty in fitted parameters
-  ![Bootstrap Example](bootstrap_placeholder.png)
 
 ## Quick Start
 
